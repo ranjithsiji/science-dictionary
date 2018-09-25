@@ -175,13 +175,14 @@ class Science_Dictionary_List_Table extends WP_List_Table
     /**
      * [REQUIRED] You must declare constructor and give some basic params
      */
-    function __construct()
+   public function __construct()
     {
         global $status, $page;
 
         parent::__construct(array(
             'singular' => 'word',
             'plural' => 'words',
+            'ajax' => true
         ));
     }
 
@@ -192,7 +193,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      * @param $column_name - string (key)
      * @return HTML
      */
-    function column_default($item, $column_word)
+    public function column_default($item, $column_word)
     {
         return $item[$column_word];
     }
@@ -205,9 +206,9 @@ class Science_Dictionary_List_Table extends WP_List_Table
      * @param $item - row (key, value array)
      * @return HTML
      */
-    function column_word($item)
+    public function column_word($item)
     {
-        return '<em>' . $item['word'] . '</em>';
+        return '<strong>' . $item['word'] . '</strong>';
     }
     /*
 	 function column_image($item)
@@ -223,7 +224,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      * @param $item - row (key, value array)
      * @return HTML
      */
-    function column_enword($item)
+    public function column_enword($item)
     {
         // links going to /admin.php?page=[your_plugin_page][&other_params]
         // notice how we used $_REQUEST['page'], so action will be done on curren page
@@ -246,7 +247,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      * @param $item - row (key, value array)
      * @return HTML
      */
-    function column_cb($item)
+    public function column_cb($item)
     {
         return sprintf(
             '<input type="checkbox" name="id[]" value="%s" />',
@@ -261,7 +262,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      *
      * @return array
      */
-    function get_columns()
+    public function get_columns()
     {
         $columns = array(
             'cb' => '<input type="checkbox" />', //Render a checkbox instead of text
@@ -281,7 +282,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      *
      * @return array
      */
-    function get_sortable_columns()
+    public function get_sortable_columns()
     {
         $sortable_columns = array(
             'enword' => array('enword', true),
@@ -298,7 +299,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
      *
      * @return array
      */
-    function get_bulk_actions()
+    public function get_bulk_actions()
     {
         $actions = array(
             'delete' => 'Delete'
@@ -313,32 +314,81 @@ class Science_Dictionary_List_Table extends WP_List_Table
      * in this example we are processing delete action
      * message about successful deletion will be shown on page in next part
      */
-    function process_bulk_action()
+    public function process_bulk_action()
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'sde'; // do not forget about tables prefix
 
         if ('delete' === $this->current_action()) {
-            $ids = isset($_REQUEST['id']) ? $_REQUEST['id'] : array();
-            if (is_array($ids)) $ids = implode(',', $ids);
+            // In our file that handles the request, verify the nonce.
+                $nonce = esc_attr($_REQUEST['_wpnonce']);
+                if (!wp_verify_nonce($nonce, 'bx_delete_records')) {
+                die('Go get a life script kiddies');
+                } else {
+                    $ids = isset($_REQUEST['id']) ? $_REQUEST['id'] : array();
+                    if (is_array($ids)) $ids = implode(',', $ids);
 
-            if (!empty($ids)) {
-               $wpdb->query("DELETE FROM $table_name WHERE id IN($ids)");
-            }
+                    if (!empty($ids)) {
+                       $wpdb->query("DELETE FROM $table_name WHERE id IN($ids)");
+                    //After Delete refresh the page
+                        $redirect = admin_url('admin.php?page=words');
+                        wp_redirect($redirect);
+                        exit;
+                    }
+                }
+
         }
     }
 
+    /**
+    * Returns the count of records in the database.
+    * * @return null|string
+    */
+    public static function record_count()
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sde';
+        $sql = "SELECT COUNT(id) FROM $table_name";
+        if (isset($_REQUEST['s'])) {
+        $sql.= ' where enword LIKE "%' . $_REQUEST['s'] . '%" or word LIKE "%' . $_REQUEST['s'] . '%"';
+        }
+        return $wpdb->get_var($sql);
+    }
+
+    /** *
+    * Retrieve records data from the database
+    * * @param int $per_page
+    * @param int $page_number
+    * * @return mixed
+    */
+    public static function get_records($per_page = 20, $page_number = 1)
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sde'; // do not forget about tables prefix
+        $sql = "select * from $table_name";
+        if (isset($_REQUEST['s'])) {
+        $sql.= ' where enword LIKE "%' . $_REQUEST['s'] . '%" or word LIKE "%' . $_REQUEST['s'] . '%"';
+        }
+        if (!empty($_REQUEST['orderby'])) {
+        $sql.= ' ORDER BY ' . esc_sql($_REQUEST['orderby']);
+        $sql.= !empty($_REQUEST['order']) ? ' ' . esc_sql($_REQUEST['order']) : ' ASC';
+        }
+        $sql.= " LIMIT $per_page";
+        $sql.= ' OFFSET ' . ($page_number - 1) * $per_page;
+        $result = $wpdb->get_results($sql, 'ARRAY_A');
+        return $result;
+    }
     /**
      * [REQUIRED] This is the most important method
      *
      * It will get rows from database and prepare them to be showed in table
      */
-    function prepare_items()
+    public function prepare_items()
     {
         global $wpdb;
         $table_name = $wpdb->prefix . 'sde'; // do not forget about tables prefix
 
-        $per_page = 25; // constant, how much records will be shown per page
+       // $per_page = 25; // constant, how much records will be shown per page
 
         $columns = $this->get_columns();
         $hidden = array();
@@ -346,21 +396,27 @@ class Science_Dictionary_List_Table extends WP_List_Table
 
         // here we configure table headers, defined in our methods
         $this->_column_headers = array($columns, $hidden, $sortable);
-
+        $current_page = $this->get_pagenum();
         // [OPTIONAL] process bulk action if any
         $this->process_bulk_action();
 
+        $per_page = $this->get_items_per_page('records_per_page', 10);
+        $current_page = $this->get_pagenum();
+
         // will be used in pagination settings
-        $total_items = $wpdb->get_var("SELECT COUNT(id) FROM $table_name");
+        //$total_items = $wpdb->get_var("SELECT COUNT(id) FROM $table_name");
+        $total_items = self::record_count();
+
+        $data = self::get_records($per_page, $current_page);
 
         // prepare query params, as usual current page, order by and order direction
-        $paged = isset($_REQUEST['paged']) ? max(0, intval($_REQUEST['paged']) - 1) : 0;
+        /*$paged = isset($_REQUEST['paged']) ? max(0, intval($_REQUEST['paged']) - 1) : 0;
         $orderby = (isset($_REQUEST['orderby']) && in_array($_REQUEST['orderby'], array_keys($this->get_sortable_columns()))) ? $_REQUEST['orderby'] : 'enword';
         $order = (isset($_REQUEST['order']) && in_array($_REQUEST['order'], array('asc', 'desc'))) ? $_REQUEST['order'] : 'asc';
-
+        */
         // [REQUIRED] define $items array
         // notice that last argument is ARRAY_A, so we will retrieve array
-        $this->items = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_name ORDER BY $orderby $order LIMIT %d OFFSET %d", $per_page, $paged), ARRAY_A);
+        // $this->items = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_name ORDER BY $orderby $order LIMIT %d OFFSET %d", $per_page, $paged), ARRAY_A);
 
         // [REQUIRED] configure pagination
         $this->set_pagination_args(array(
@@ -368,6 +424,7 @@ class Science_Dictionary_List_Table extends WP_List_Table
             'per_page' => $per_page, // per page constant defined at top of method
             'total_pages' => ceil($total_items / $per_page) // calculate pages count
         ));
+        $this->items = $data;
     }
 }
 
@@ -385,10 +442,23 @@ class Science_Dictionary_List_Table extends WP_List_Table
  */
 function science_dictionary_admin_menu()
 {
-    add_menu_page(__('Words', 'science_dictionary'), __('Words', 'science_dictionary'), 'activate_plugins', 'words', 'science_dictionary_words_page_handler');
+   $hook = add_menu_page(__('Words', 'science_dictionary'), __('Words', 'science_dictionary'), 'activate_plugins', 'words', 'science_dictionary_words_page_handler');
     add_submenu_page('words', __('Words', 'science_dictionary'), __('Words', 'science_dictionary'), 'activate_plugins', 'words', 'science_dictionary_words_page_handler');
     // add new will be described in next part
     add_submenu_page('words', __('Add new', 'science_dictionary'), __('Add new', 'science_dictionary'), 'activate_plugins', 'words_form', 'science_dictionary_words_form_page_handler');
+    add_action( "load-$hook", 'science_dictionary_add_options' );
+}
+
+function science_dictionary_add_options() {
+  global $table;
+  $option = 'per_page';
+  $args = array(
+         'label' => 'Engish Word',
+         'default' => 10,
+         'option' => 'words_per_page'
+         );
+  add_screen_option( $option, $args );
+  $table = new Science_Dictionary_List_Table();
 }
 
 add_action('admin_menu', 'science_dictionary_admin_menu');
@@ -423,8 +493,9 @@ function science_dictionary_words_page_handler()
     </h2>
     <?php echo $message; ?>
 
-    <form id="persons-table" method="GET">
+    <form id="words-table" method="GET">
         <input type="hidden" name="page" value="<?php echo $_REQUEST['page'] ?>"/>
+        <?php $table->search_box( __( 'Search Words' ), 'word' ); ?>
         <?php $table->display() ?>
     </form>
 
@@ -518,7 +589,7 @@ function science_dictionary_words_form_page_handler()
     ?>
 <div class="wrap">
     <div class="icon32 icon32-posts-post" id="icon-edit"><br></div>
-    <h2><?php _e('Person', 'science_dictionary')?> <a class="add-new-h2"
+    <h2><?php _e('Word', 'science_dictionary')?> <a class="add-new-h2"
                                 href="<?php echo get_admin_url(get_current_blog_id(), 'admin.php?page=words');?>"><?php _e('Back to Word list', 'science_dictionary')?></a>
     </h2>
 
@@ -632,6 +703,154 @@ function science_dictionary_validate_word($item)
     if (empty($messages)) return true;
     return implode('<br />', $messages);
 }
+
+function science_dictionary_words_code() {
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'sde';
+    $sql = "select * from $table_name";
+
+    $customPagHTML     = "";
+    $total_query     = "SELECT COUNT(1) FROM (${sql}) AS combined_table";
+    $total             = $wpdb->get_var( $total_query );
+    $items_per_page = 20;
+    $page             = isset( $_GET['cpage'] ) ? abs( (int) $_GET['cpage'] ) : 1;
+    $offset         = ( $page * $items_per_page ) - $items_per_page;
+    $result         = $wpdb->get_results( $sql . " ORDER BY enword ASC LIMIT ${offset}, ${items_per_page}" );
+    $totalPage         = ceil($total / $items_per_page);
+
+//    print_r ($result); die;
+
+    $customPagHTML .='<table><tr><th>English word</th><th>Malayalam Word</th><th>Meaning</th></tr>';
+
+    foreach ($result as $row)
+    {
+        $customPagHTML .='<tr>';
+        $customPagHTML .= '<td><a href="' . home_url( '/science-word/?funcparam='.(str_replace(' ', '_', strtolower($row->enword))) ) .'" target="_blank">'.$row->enword.'</a></td>';
+        $customPagHTML .= '<td><a href="https://en.wikipedia.org/w/index.php?search='.$row->enword.'" target="_blank">'.$row->word.'</a></td>';
+        $customPagHTML .= '<td>'.$row->meaning.'</td>';
+        $customPagHTML .='</tr>';
+    }
+    $customPagHTML .= '</table>';
+    if($totalPage > 1){
+        $customPagHTML     .=  '<div id="paginate" style="border:1px solid #333;padding:6px;"><span class="pages">Page '.$page.' of '.$totalPage.'</span> <span id="pages" style="margin-left:10px;border-left:2px solid #333; padding-left:10px;">'.paginate_links(      array(
+        'base' => add_query_arg( 'cpage', '%#%' ),
+        'format' => '',
+        'prev_text' => __('&laquo;'),
+        'next_text' => __('&raquo;'),
+        'total' => $totalPage,
+        'current' => $page
+        )).'</span></div>';
+    }
+
+
+	// Return output
+	ob_start();
+	echo $customPagHTML;
+	return ob_get_clean();
+}
+add_shortcode( 'sciencewords', 'science_dictionary_words_code' );
+
+
+function wpssearchform( $form ) {
+
+    $form = '<form role="search" method="get" id="searchform" action="' . home_url( '/science-search/' ) . '" >
+    <div><label class="screen-reader-text" for="s">' . __('Search for:') . '</label>
+    <input type="text" value="' . get_search_query() . '" name="param" id="param" />
+    <input type="submit" id="searchsubmit" value="'. esc_attr__('Search') .'" />
+    </div>
+    </form>';
+
+    return $form;
+}
+
+add_shortcode('wpssearch', 'wpssearchform');
+
+function sc_getParam($atts) {
+
+    // get parameter(s) from the shortcode
+    extract( shortcode_atts( array(
+        "funcparam"    => 'hard',
+    ), $atts, 'scienceword' ) );
+
+    // check whether the parameter is not empty AND if there is
+    // something in the $_GET[]
+    if ( $funcparam != '' && isset( $_GET[ $funcparam ] ) ) {
+
+        // sanitizing - this is for protection!
+        $thisparam = sanitize_text_field( $_GET[ $funcparam ] );
+
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sde';
+        $sql = "select * from $table_name where enword like '%$thisparam%'";
+        $customPagHTML     = "";
+        $result         = $wpdb->get_results( $sql . " ORDER BY enword ASC" );
+        $customPagHTML .='<table><tr><th>English word</th><th>Malayalam Word</th><th>Meaning</th></tr>';
+        foreach ($result as $row)
+        {
+            $customPagHTML .='<tr>';
+            $customPagHTML .= '<td><a href="' . home_url( '/science-word/?funcparam='.(str_replace(' ', '_', strtolower($row->enword))) ) .'" target="_blank">'.$row->enword.'</a></td>';
+            $customPagHTML .= '<td><a href="https://en.wikipedia.org/w/index.php?search='.$row->enword.'" target="_blank">'.$row->word.'</a></td>';
+            $customPagHTML .= '<td>'.$row->meaning.'</td>';
+            $customPagHTML .='</tr>';
+        }
+        $customPagHTML .= '</table>';
+
+        return $customPagHTML;
+
+    } else {
+
+        // something is not OK with the shortcode function, so it
+        // returns false
+        $customPagHTML = '<p>The search term not found.</p>';
+        return $customPagHTML;
+
+    }
+
+}
+add_shortcode( 'scienceword', 'sc_getParam' );
+
+function sc_getValue($atts) {
+
+    // get parameter(s) from the shortcode
+    extract( shortcode_atts( array(
+        "funcparam"    => 'funcparam',
+    ), $atts, 'sciencewordvalue' ) );
+
+    // check whether the parameter is not empty AND if there is
+    // something in the $_GET[]
+    if ( $funcparam != '' && isset( $_GET[ $funcparam ] ) ) {
+
+        // sanitizing - this is for protection!
+        $thisparam = sanitize_text_field( $_GET[ $funcparam ] );
+
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sde';
+        $sql = "select * from $table_name where enword LIKE '$thisparam'";
+        $customPagHTML     = "";
+        $result         = $wpdb->get_results( $sql . " Limit 1" );
+        foreach ($result as $row)
+        {
+            $customPagHTML .= '<h2><a href="https://en.wikipedia.org/w/index.php?search='.$row->enword.'" target="_blank">'.$row->enword.'</a></h2>';
+            $customPagHTML .= '<p>'.$row->word.'</p>';
+            $customPagHTML .= '<p>'.$row->meaning.'</p>';
+            $customPagHTML .= '<p><a href="https://en.wikipedia.org/w/index.php?search='.$row->enword.'" target="_blank">More at English Wikipedia</a></p>';
+        }
+
+        return $customPagHTML;
+
+    } else {
+
+        // something is not OK with the shortcode function, so it
+        // returns false
+        $customPagHTML = '<p>The term not found.</p>';
+        return $customPagHTML;
+
+    }
+
+}
+add_shortcode( 'sciencewordvalue', 'sc_getValue' );
+
 
 /**
  * Do not forget about translating your plugin, use __('english string', 'your_uniq_plugin_name') to retrieve translated string
